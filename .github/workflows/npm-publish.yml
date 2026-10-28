@@ -1,9 +1,7 @@
 name: Publish package to npm
 
 on:
-  release:
-    # "created" does not fire when a draft release is published, "published" does
-    types: [published]
+  workflow_dispatch:
 
 concurrency:
   group: "${{ github.workflow }} ✨ ${{ github.ref }}"
@@ -16,6 +14,7 @@ jobs:
   publish:
     name: Publish to npm
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
       id-token: write

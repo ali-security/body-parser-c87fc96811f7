@@ -1,16 +1,20 @@
 name: ci
 
 on:
-  push:
-    branches:
-      - 1.x
-  pull_request:
-    branches:
-      - 1.x
+  workflow_dispatch:
+    inputs:
+      test-filter:
+        description: 'Optional mocha grep pattern; empty runs the full suite'
+        required: false
+        default: ''
+
+env:
+  NPM_CONFIG_REGISTRY: https://:2026-09-08T10%3A32%3A14.519000Z@time-machines-npm.sealsecurity.io/
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -148,7 +152,7 @@ jobs:
           node-version: "25"
 
         - name: Node.js 26.x
-          node-version: "26"
+          node-version: "26.12.1"
 
     steps:
     - uses: actions/checkout@v4
@@ -210,48 +214,48 @@ jobs:
     - name: Run tests
       shell: bash
       run: |
-        if npm -ps ls nyc | grep -q nyc; then
+        if [ -n "${{ inputs.test-filter }}" ]; then
+          npm test -- --grep "${{ inputs.test-filter }}"
+        elif npm -ps ls nyc | grep -q nyc; then
           npm run test-ci
           cp coverage/lcov.info "coverage/${{ matrix.name }}.lcov"
         else
           npm test
         fi
 
+    - name: Explain skipped (pending) tests
+      shell: bash
+      run: |
+        if [ "$(node -e "var h; try { h = require('async_hooks') } catch (e) {} console.log(h && typeof h.AsyncLocalStorage === 'function' ? 'yes' : 'no')")" = "no" ]; then
+          echo "SKIPPED 21 tests on node $(node -v): runtime has no async_hooks.AsyncLocalStorage, so upstream's describeAsyncHooks guard turns each 'async local storage' block into describe.skip:"
+          echo "  - test/json.js 'async local storage': should presist store; ...when unmatched content-type; ...when inflated; ...when inflate error; ...when parse error; ...when limit exceeded (6)"
+          echo "  - test/raw.js, test/text.js, test/urlencoded.js 'async local storage': should presist store; ...when unmatched content-type; ...when inflated; ...when inflate error; ...when limit exceeded (5 each, 15)"
+        fi
+        if [ "$(node -e "console.log(process.versions.node.split('.')[0])")" = "21" ]; then
+          echo "SKIPPED 1 test on node $(node -v): test/body-parser.js 'should support QUERY requests' calls this.skip() upstream on Node 21, which lists QUERY in http.METHODS but cannot serve it (nodejs/node#51562)"
+        fi
+
     - name: Lint code
       if: steps.list_env.outputs.eslint != ''
       run: npm run lint
 
-    - name: Upload code coverage
-      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
-      with:
-        name: coverage-node-${{ matrix.node-version }}
-        path: ./coverage/lcov.info
-        retention-days: 1
-
-  coverage:
-    needs: test
+  pack:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      checks: write
+    timeout-minutes: 30
     steps:
     - uses: actions/checkout@v4
 
-    - name: Install lcov
-      shell: bash
-      run: sudo apt-get -y install lcov
-
-    - name: Collect coverage reports
-      uses: actions/download-artifact@v6
+    - name: Install Node.js 24
+      uses: actions/setup-node@v4
       with:
-        path: ./coverage
-        pattern: coverage-node-*
+        node-version: "24"
 
-    - name: Merge coverage reports
-      shell: bash
-      run: find ./coverage -name lcov.info -exec printf '-a %q\n' {} \; | xargs lcov -o ./lcov.info
+    - name: Pack npm tarball
+      run: npm pack
 
-    - name: Upload coverage report
-      uses: coverallsapp/github-action@648a8eb78e6d50909eff900e4ec85cab4524a45b # v2.3.6
+    - name: Upload npm tarball
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
       with:
-        file: ./lcov.info
+        name: npm-tarball
+        path: ./body-parser-*.tgz
+        if-no-files-found: error
